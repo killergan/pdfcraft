@@ -1,0 +1,152 @@
+name: BEM release
+
+# Fork-only. Keeps this fork on top of upstream's latest release and publishes a Windows build
+# that installed copies pick up by themselves (apps/pdfcraft/src/autoupdate.rs):
+#   build:   merge upstream's latest release tag into this fork's `main` (a conflict fails the
+#            run: resolve it by hand), build a release exe labelled `bem-<run number>`.
+#   publish: sign the exe's SHA-256 with the update key and publish release `bem-<run number>`.
+# Nothing is built when neither this fork nor upstream's release has moved since the last release.
+#
+# Why two jobs: `build` compiles upstream code (build scripts, proc macros, dependencies), which
+# must never be able to reach the signing key or a write token. So `build` has read-only
+# permissions and no secrets. `publish` has the secret and the write token, and runs only
+# openssl, sha256sum and gh over the one file `build` produced.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if nothing changed since the last release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bem-release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  UPSTREAM: storytold/pdfcraft
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      build: ${{ steps.merge.outputs.build }}
+      key: ${{ steps.merge.outputs.key }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream's latest release
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          git config user.name "bem-release"
+          git config user.email "bem-release@users.noreply.github.com"
+          TAG="$(gh api "repos/${UPSTREAM}/releases/latest" --jq .tag_name)"
+          case "$TAG" in v[0-9]*) ;; *) echo "unexpected upstream release tag: $TAG"; exit 1 ;; esac
+          git remote add upstream "https://github.com/${UPSTREAM}.git"
+          git fetch --no-tags upstream "refs/tags/${TAG}:refs/tags/upstream-${TAG}"
+          KEY="$(git rev-parse HEAD)+$(git rev-parse "refs/tags/upstream-${TAG}^{commit}")"
+          LAST="$(gh release view --repo "$GITHUB_REPOSITORY" --json body --jq .body 2>/dev/null | tr -d '\r' | sed -n 's/^key: //p' | head -n 1 || true)"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          if [ "$KEY" = "$LAST" ] && [ "$FORCE" != "true" ]; then
+            echo "Nothing changed since the last release ($KEY)."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git merge --no-edit "refs/tags/upstream-${TAG}"
+          echo "build=true" >> "$GITHUB_OUTPUT"
+
+      - name: Rust toolchain
+        if: steps.merge.outputs.build == 'true'
+        run: rustup update stable --no-self-update && rustc --version
+
+      # Same optional font input upstream's release embeds (Japanese UI and edited-PDF text),
+      # at the exact commit upstream's own release workflow pins. Fetched, never committed.
+      # No pin found means no fonts, never "whatever is newest".
+      - name: Fonts
+        if: steps.merge.outputs.build == 'true'
+        run: |
+          REF="$(grep -oE 'craft-fonts-ref: *[0-9a-f]{40}' .github/workflows/release.yml | grep -oE '[0-9a-f]{40}' | head -n 1 || true)"
+          if [ -z "$REF" ]; then
+            echo "No craft-fonts pin in upstream's release workflow: building without the fonts."
+            exit 0
+          fi
+          git clone --quiet https://github.com/storytold/craft-fonts "$RUNNER_TEMP/craft-fonts"
+          git -C "$RUNNER_TEMP/craft-fonts" checkout --quiet "$REF"
+          echo "CRAFT_FONTS_DIR=$RUNNER_TEMP/craft-fonts" >> "$GITHUB_ENV"
+
+      - name: Build
+        if: steps.merge.outputs.build == 'true'
+        env:
+          PDFCRAFT_BUILD_LABEL: bem-${{ github.run_number }}
+        run: cargo build --release --locked -p pdfcraft
+
+      - name: Check the build
+        if: steps.merge.outputs.build == 'true'
+        run: |
+          mkdir dist
+          cp target/release/pdfcraft.exe dist/pdfcraft-windows-x86_64.exe
+          ./dist/pdfcraft-windows-x86_64.exe --version
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.merge.outputs.build == 'true'
+        with:
+          name: pdfcraft-windows
+          path: dist/pdfcraft-windows-x86_64.exe
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: build
+    if: needs.build.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pdfcraft-windows
+          path: dist
+
+      - name: Sign and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_KEY: ${{ secrets.BEM_UPDATE_SIGNING_KEY }}
+          TAG: bem-${{ github.run_number }}
+          KEY: ${{ needs.build.outputs.key }}
+        run: |
+          test -n "$SIGNING_KEY" || { echo "secret BEM_UPDATE_SIGNING_KEY is not set"; exit 1; }
+          cd dist
+          test "$(ls | wc -l)" = 1 && test -f pdfcraft-windows-x86_64.exe
+          sha256sum pdfcraft-windows-x86_64.exe > pdfcraft-windows-x86_64.exe.sha256
+          # The build number goes inside the signed bytes: the release tag is not signed, so
+          # without this an old signed build could be re-published under a newer tag.
+          printf 'build: %s\n' "$TAG" >> pdfcraft-windows-x86_64.exe.sha256
+          KEYFILE="$(mktemp)"
+          trap 'rm -f "$KEYFILE"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$KEYFILE"
+          # Ed25519 over the exact bytes of the .sha256 file; the app checks this before it
+          # downloads the exe (apps/pdfcraft/src/autoupdate.rs).
+          openssl pkeyutl -sign -inkey "$KEYFILE" -rawin -in pdfcraft-windows-x86_64.exe.sha256 -out pdfcraft-windows-x86_64.exe.sha256.sig
+          test "$(wc -c < pdfcraft-windows-x86_64.exe.sha256.sig)" = 64
+          cat pdfcraft-windows-x86_64.exe.sha256
+          printf 'Windows build %s: this fork on top of upstream.\n\nkey: %s\n' "$TAG" "$KEY" > ../notes.txt
+          gh release create "$TAG" pdfcraft-windows-x86_64.exe pdfcraft-windows-x86_64.exe.sha256 pdfcraft-windows-x86_64.exe.sha256.sig \
+            --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file ../notes.txt --target main

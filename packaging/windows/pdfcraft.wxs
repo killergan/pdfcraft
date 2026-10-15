@@ -54,6 +54,10 @@
     <!-- "Edit with PdfCraft" on the right-click menu of PDF files in File Explorer (#682): on by
          default, the same way, and INSTALLPDFCONTEXTMENU=0 for unattended installs without it. -->
     <Property Id="INSTALLPDFCONTEXTMENU" Value="1" Secure="yes" />
+    <!-- BEM fork: "Make PdfCraft the default app for PDF files", on by default, a checkbox in the
+         welcome dialog, and INSTALLPDFDEFAULT=0 for unattended installs without it. Upstream
+         never sets the default; this sets the machine-wide .pdf default (see the component). -->
+    <Property Id="INSTALLPDFDEFAULT" Value="1" Secure="yes" />
     <UIRef Id="PdfcraftInstallerUI" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
@@ -85,7 +89,7 @@
              run as a file handler ("This app can't run on your PC"). -->
         <RegistryValue Root="HKLM" Key="Software\Classes\PdfCraft.Document" Value="PDF Document" Type="string" />
         <!-- A negative index selects the stable icon resource ID, rather than its position.
-             Resource 1 is the app's lion; resource 2 is the PDF document (build.rs). -->
+             Resource 1 is the app icon; resource 2 is the PDF document (build.rs). -->
         <RegistryValue Root="HKLM" Key="Software\Classes\PdfCraft.Document\DefaultIcon" Value="&quot;[#PdfcraftExe]&quot;,-2" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\PdfCraft.Document\shell\open\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\.pdf\OpenWithProgids" Name="PdfCraft.Document" Value="" Type="string" />
@@ -163,6 +167,18 @@
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Edit" Name="Icon" Value="&quot;[#PdfcraftExe]&quot;,0" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Edit" Name="MultiSelectModel" Value="Document" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Edit\command" Value="&quot;[#PdfcraftExe]&quot; &quot;%1&quot;" Type="string" />
+      </Component>
+
+      <!-- BEM fork: PdfCraft as the machine-wide default for .pdf (the HKLM .pdf default value
+           names its ProgId, PdfCraft.Document above). Gated by INSTALLPDFDEFAULT, its own
+           component with that value as key path, so INSTALLPDFDEFAULT=0 leaves it out.
+           Windows still lets a user's own per-user choice (Settings > Default apps, or an earlier
+           "Always use this app") win over this value, and an installer cannot override that; the
+           finish dialog says where to change it. Uninstall removes the value, and Windows then
+           asks which app to use. -->
+      <Component Id="PdfcraftPdfDefault" Guid="0B7C5F0A-6E5B-4C77-9A5E-2F6D4B8E1A93"
+          Condition="INSTALLPDFDEFAULT = 1">
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pdf" Value="PdfCraft.Document" Type="string" KeyPath="yes" />
       </Component>
 
       <Component Id="PdfcraftCli">
