@@ -31,6 +31,8 @@ use pdfcraft_ui_egui::PdfCraftApp;
 
 #[cfg(target_os = "macos")]
 mod apple_events;
+#[cfg(target_os = "windows")]
+mod autoupdate;
 mod compositor_gpu;
 mod decorations;
 mod logging;
@@ -222,6 +224,9 @@ fn main() -> eframe::Result {
         single_instance::Claim::Primary(server) => Some(server),
         single_instance::Claim::Alone => None,
     };
+    // BEM fork: a labelled release build quietly updates itself from the fork's releases.
+    #[cfg(target_os = "windows")]
+    autoupdate::spawn();
     let choice = renderer_choice(std::env::var("PDFCRAFT_RENDERER").ok().as_deref());
     let launch = Launch { files, options, control_file, create_images, integrated, window_controls };
     // Finder, Open With and the Dock deliver files as Apple events, not arguments; catch the one
@@ -361,6 +366,7 @@ fn app_creator<'a>(
             app.motion.source = Some(motion::source());
         }
         app.update_source = Some(std::sync::Arc::new(updates::latest_release));
+        app.close_panels_on_open = true;
         app.printer_source = Some(pdfcraft_ui_egui::system_printers());
         app.os_key_store_ids = cfg!(any(target_os = "macos", target_os = "windows"));
         #[cfg(target_os = "macos")]

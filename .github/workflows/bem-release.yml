@@ -1,0 +1,109 @@
+name: BEM release
+
+# Fork-only. Keeps this fork on top of upstream and publishes a Windows build that installed copies
+# pick up by themselves (apps/pdfcraft/src/autoupdate.rs):
+#   1. merge upstream `main` into this fork's `main` (a conflict fails the run: resolve it by hand),
+#   2. build a release exe labelled `bem-<run number>`,
+#   3. publish it as release `bem-<run number>` with a `.sha256` file.
+# Nothing is built when neither this fork nor upstream has moved since the last release.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if nothing changed since the last release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bem-release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  UPSTREAM: storytold/pdfcraft
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          git config user.name "bem-release"
+          git config user.email "bem-release@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM}.git"
+          git fetch --no-tags upstream main
+          KEY="$(git rev-parse HEAD)+$(git rev-parse upstream/main)"
+          LAST="$(gh release view --json body --jq .body 2>/dev/null | tr -d '\r' | sed -n 's/^key: //p' | head -n 1 || true)"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          if [ "$KEY" = "$LAST" ] && [ "$FORCE" != "true" ]; then
+            echo "Nothing changed since the last release ($KEY)."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git merge --no-edit upstream/main
+          echo "build=true" >> "$GITHUB_OUTPUT"
+
+      - name: Rust toolchain
+        if: steps.merge.outputs.build == 'true'
+        run: rustup update stable --no-self-update && rustc --version
+
+      # Same optional font input upstream's release embeds (Japanese UI and edited-PDF text),
+      # pinned to the ref upstream's own release workflow uses. Fetched, never committed.
+      - name: Fonts
+        if: steps.merge.outputs.build == 'true'
+        run: |
+          REF="$(grep -oE 'craft-fonts-ref: *[0-9a-f]{40}' .github/workflows/release.yml | grep -oE '[0-9a-f]{40}' | head -n 1 || true)"
+          git clone --quiet https://github.com/storytold/craft-fonts "$RUNNER_TEMP/craft-fonts"
+          if [ -n "$REF" ]; then git -C "$RUNNER_TEMP/craft-fonts" checkout --quiet "$REF"; fi
+          echo "CRAFT_FONTS_DIR=$RUNNER_TEMP/craft-fonts" >> "$GITHUB_ENV"
+
+      - name: Build
+        if: steps.merge.outputs.build == 'true'
+        env:
+          PDFCRAFT_BUILD_LABEL: bem-${{ github.run_number }}
+        run: cargo build --release --locked -p pdfcraft
+
+      - name: Package
+        if: steps.merge.outputs.build == 'true'
+        run: |
+          mkdir dist
+          cp target/release/pdfcraft.exe dist/pdfcraft-windows-x86_64.exe
+          (cd dist && sha256sum pdfcraft-windows-x86_64.exe > pdfcraft-windows-x86_64.exe.sha256)
+          cat dist/pdfcraft-windows-x86_64.exe.sha256
+          ./dist/pdfcraft-windows-x86_64.exe --version
+
+      - name: Publish release
+        if: steps.merge.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: bem-${{ github.run_number }}
+          KEY: ${{ steps.merge.outputs.key }}
+        run: |
+          printf 'Windows build %s: this fork on top of upstream.\n\nkey: %s\n' "$TAG" "$KEY" > notes.txt
+          gh release create "$TAG" dist/pdfcraft-windows-x86_64.exe dist/pdfcraft-windows-x86_64.exe.sha256 \
+            --title "$TAG" --notes-file notes.txt --target main
+
+      # Keeps the fork's `main` in step with what was built. The default token can't push changes
+      # to workflow files, so this is allowed to fail: the next run just merges upstream again.
+      - name: Push the merge
+        if: steps.merge.outputs.build == 'true'
+        continue-on-error: true
+        run: git push origin HEAD:main

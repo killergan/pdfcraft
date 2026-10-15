@@ -490,6 +490,9 @@ pub struct PdfCraftApp {
     pub left: LeftPanel,
     pub left_open: bool,
     pub right: Option<RightPanel>,
+    /// BEM fork: a document opened in the foreground starts as just the page, with the Tools
+    /// panel and the right pane closed whatever was open before. The rail and menus still open them.
+    pub close_panels_on_open: bool,
     /// The right panel that was open when the user switched to Read mode, which starts with the
     /// panes closed; leaving Read mode brings it back unless the user opened or closed a pane in
     /// Read mode meanwhile.
@@ -873,6 +876,7 @@ impl PdfCraftApp {
             pending_panel_reveals: Vec::new(),
             left_open: true,
             right: None,
+            close_panels_on_open: false,
             right_before_read: None,
             comments_panel_closed: false,
             right_panel_closed: false,
@@ -1289,6 +1293,10 @@ impl PdfCraftApp {
             } else {
                 None
             };
+        }
+        if activate && self.close_panels_on_open {
+            self.left_open = false;
+            self.right = None;
         }
         let initial = doc.initial_view();
         self.views.push(DocView::new(id, &doc.info, self.view_defaults));
