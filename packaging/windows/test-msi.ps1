@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Check the compiled MSI's install scope, publisher, shortcuts, native UI and OCR models, without installing it.
 .EXAMPLE
@@ -145,8 +145,7 @@ foreach ($ext in @('png', 'jpg', 'jpeg', 'tif', 'tiff', 'gif', 'bmp', 'jp2', 'j2
 # PDF context menu (#682): "Edit with PdfCraft" opens the file in PdfCraft. Its own component, gated
 # by INSTALLPDFCONTEXTMENU (default 1, secure, welcome checkbox), with its menu value as key path so
 # uninstall removes it. Several selected PDFs each start pdfcraft.exe "%1" (Document), which the
-# single-instance hand-off opens as tabs. The .pdf default is never set, so the user's default app
-# stays.
+# single-instance hand-off opens as tabs. (Setting the .pdf default is a separate BEM-fork option, below.)
 $pdfKey = 'Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Edit'
 $pdfMenu = Read-Row ('SELECT `Registry`, `Value`, `Component_`, `Root` FROM `Registry` WHERE `Key` = ''' + $pdfKey + ''' AND `Name` IS NULL') 4
 Assert-Equal $pdfMenu[1] 'Edit with PdfCraft' 'PDF context menu label'
@@ -172,7 +171,24 @@ Assert-Equal $pdfCheckbox[1] 'INSTALLPDFCONTEXTMENU' 'Welcome PDF context-menu p
 if ($pdfCheckbox[2] -notmatch 'Edit with PdfCraft') { throw "Welcome PDF context-menu label: '$($pdfCheckbox[2])'" }
 $pdfChecked = Read-Row 'SELECT `Value` FROM `CheckBox` WHERE `Property` = ''INSTALLPDFCONTEXTMENU''' 1
 Assert-Equal $pdfChecked[0] '1' 'Welcome PDF context-menu value'
-Assert-NoRow 'SELECT `Registry` FROM `Registry` WHERE `Key` = ''Software\Classes\.pdf'' AND `Name` IS NULL' '.pdf default app'
+# BEM fork: the machine-wide .pdf default names PdfCraft.Document, in its own component gated by
+# INSTALLPDFDEFAULT (default 1, secure, welcome checkbox, key path = that value).
+$pdfAssoc = Read-Row 'SELECT `Registry`, `Value`, `Component_`, `Root` FROM `Registry` WHERE `Key` = ''Software\Classes\.pdf'' AND `Name` IS NULL' 4
+Assert-Equal $pdfAssoc[1] 'PdfCraft.Document' '.pdf default ProgId'
+Assert-Equal $pdfAssoc[2] 'PdfcraftPdfDefault' '.pdf default component'
+Assert-Equal $pdfAssoc[3] '2' '.pdf default HKLM root'
+$assocComponent = Read-Row 'SELECT `Condition`, `KeyPath` FROM `Component` WHERE `Component` = ''PdfcraftPdfDefault''' 2
+Assert-Equal $assocComponent[0] 'INSTALLPDFDEFAULT = 1' '.pdf default condition'
+Assert-Equal $assocComponent[1] $pdfAssoc[0] '.pdf default key path'
+$assocDefault = Read-Row 'SELECT `Value` FROM `Property` WHERE `Property` = ''INSTALLPDFDEFAULT''' 1
+Assert-Equal $assocDefault[0] '1' '.pdf default is on by default'
+if (($secure[0] -split ';') -notcontains 'INSTALLPDFDEFAULT') { throw "INSTALLPDFDEFAULT is not secure: '$($secure[0])'" }
+$assocCheckbox = Read-Row 'SELECT `Type`, `Property`, `Text` FROM `Control` WHERE `Dialog_` = ''InstallWelcome'' AND `Control` = ''PdfDefault''' 3
+Assert-Equal $assocCheckbox[0] 'CheckBox' 'Welcome default-app control'
+Assert-Equal $assocCheckbox[1] 'INSTALLPDFDEFAULT' 'Welcome default-app property'
+if ($assocCheckbox[2] -notmatch 'default app for PDF') { throw "Welcome default-app label: '$($assocCheckbox[2])'" }
+$assocChecked = Read-Row 'SELECT `Value` FROM `CheckBox` WHERE `Property` = ''INSTALLPDFDEFAULT''' 1
+Assert-Equal $assocChecked[0] '1' 'Welcome default-app value'
 
 # Negative sequences are Windows Installer's success/user-exit/failure paths. Only full UI
 # shows these dialogs: an unattended /qn or /qb install must never wait for a Finish click.

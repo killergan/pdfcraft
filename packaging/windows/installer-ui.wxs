@@ -8,7 +8,7 @@
       <TextStyle Id="InstallerTitle" FaceName="Segoe UI" Size="12" Bold="yes" />
       <Property Id="DefaultUIFont" Value="InstallerNormal" />
 
-      <Dialog Id="InstallWelcome" Width="370" Height="180" Title="[ProductName] Setup">
+      <Dialog Id="InstallWelcome" Width="370" Height="200" Title="[ProductName] Setup">
         <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}Install [ProductName]" />
         <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="40"
             Text="Setup will install [ProductName] for all users and add it to the Start menu. Click Install to continue." />
@@ -16,10 +16,12 @@
             Property="INSTALLDESKTOPSHORTCUT" CheckBoxValue="1" Text="Create a &amp;desktop shortcut" />
         <Control Id="PdfContextMenu" Type="CheckBox" X="20" Y="123" Width="330" Height="17"
             Property="INSTALLPDFCONTEXTMENU" CheckBoxValue="1" Text="Add &quot;&amp;Edit with PdfCraft&quot; to the right-click menu of PDF files" />
-        <Control Id="Install" Type="PushButton" X="195" Y="145" Width="75" Height="23" Default="yes" ElevationShield="yes" Text="&amp;Install">
+        <Control Id="PdfDefault" Type="CheckBox" X="20" Y="141" Width="330" Height="17"
+            Property="INSTALLPDFDEFAULT" CheckBoxValue="1" Text="Make PdfCraft the &amp;default app for PDF files" />
+        <Control Id="Install" Type="PushButton" X="195" Y="165" Width="75" Height="23" Default="yes" ElevationShield="yes" Text="&amp;Install">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="280" Y="145" Width="70" Height="23" Cancel="yes" Text="Cancel">
+        <Control Id="Cancel" Type="PushButton" X="280" Y="165" Width="70" Height="23" Cancel="yes" Text="Cancel">
           <Publish Event="EndDialog" Value="Exit" />
         </Control>
       </Dialog>
@@ -66,8 +68,10 @@
 
       <Dialog Id="InstallComplete" Width="370" Height="180" Title="[ProductName] Setup">
         <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="25" Text="{\InstallerTitle}Setup completed successfully" />
-        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="70"
+        <Control Id="Description" Type="Text" X="20" Y="55" Width="330" Height="30"
             Text="[ProductName] setup has completed successfully. Click Finish to close this window." />
+        <Control Id="DefaultAppNote" Type="Text" X="20" Y="90" Width="330" Height="40"
+            Text="To open PDF files with PdfCraft by default, or if Windows keeps using another app, choose PdfCraft under Settings, Apps, Default apps (search for .pdf)." />
         <Control Id="Finish" Type="PushButton" X="280" Y="145" Width="70" Height="23" Default="yes" Cancel="yes" Text="&amp;Finish">
           <Publish Event="EndDialog" Value="Return" />
         </Control>
