@@ -54,6 +54,8 @@ whoever runs it).
 
 - A release asset that was replaced, or a download from another URL, is refused: it isn't signed
   with the key.
+- An old signed build re-published under a newer tag is refused too: the signed checksum file
+  states `build: bem-<N>`, which must equal the tag, so installs can't be rolled back that way.
 - Someone who can run the workflow, change the workflow file on `main`, or read the secret can
   still publish a release. Anyone who can push to `main` can change what the next build contains.
   Keep the GitHub account protected (two-factor login) and review changes to `main`.

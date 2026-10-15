@@ -136,6 +136,9 @@ jobs:
           cd dist
           test "$(ls | wc -l)" = 1 && test -f pdfcraft-windows-x86_64.exe
           sha256sum pdfcraft-windows-x86_64.exe > pdfcraft-windows-x86_64.exe.sha256
+          # The build number goes inside the signed bytes: the release tag is not signed, so
+          # without this an old signed build could be re-published under a newer tag.
+          printf 'build: %s\n' "$TAG" >> pdfcraft-windows-x86_64.exe.sha256
           KEYFILE="$(mktemp)"
           trap 'rm -f "$KEYFILE"' EXIT
           printf '%s\n' "$SIGNING_KEY" > "$KEYFILE"

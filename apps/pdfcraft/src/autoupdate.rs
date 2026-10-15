@@ -11,7 +11,9 @@
 //! public half is [`PUBLIC_KEY_HEX`]; the private half exists only as a secret of the publishing
 //! job in `.github/workflows/bem-release.yml`. So a replaced release asset, or anything fetched
 //! from a look-alike URL, is refused: the checksum alone only shows the download wasn't damaged.
-//! The signature is checked before the executable is downloaded.
+//! The signed file also states the build number (`build: bem-<N>`), which must equal the release's
+//! tag, so an old signed build can't be replayed under a newer tag to roll an install back. The
+//! signature is checked before the executable is downloaded.
 //!
 //! A build without that label (anything made with plain `cargo build`) never updates itself, so a
 //! development build can't overwrite itself with a release. `PDFCRAFT_NO_AUTO_UPDATE` (any
@@ -98,6 +100,13 @@ fn parse_checksum(text: &str) -> Option<String> {
     (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
 }
 
+/// The build number the signed checksum file states (a `build: bem-12` line). The release tag is
+/// not signed, so this is what keeps an old, validly signed build from being replayed under a
+/// newer tag to roll an install back.
+fn signed_build(text: &str) -> Option<u64> {
+    text.lines().find_map(|line| line.strip_prefix("build: ")).and_then(|b| build_number(Some(b)))
+}
+
 /// `pdfcraft.exe` → `pdfcraft.exe.new`.
 fn beside(exe: &Path, suffix: &str) -> PathBuf {
     let mut name = exe.as_os_str().to_owned();
@@ -181,6 +190,11 @@ fn check() -> Result<Option<u64>, String> {
     let key = unhex(PUBLIC_KEY_HEX).ok_or("the built-in update key is not valid hex")?;
     verify_signature(&key, &checksum, &signature)?;
     let checksum = String::from_utf8(checksum).map_err(|_| "the release's checksum file is not text".to_string())?;
+    // The tag is not signed but the build number inside the signed file is: they must agree, or
+    // an old signed build is being replayed under a newer tag.
+    if signed_build(&checksum) != Some(release.number) {
+        return Err(format!("the signed checksum does not name build bem-{} (replayed release?)", release.number));
+    }
     let wanted = parse_checksum(&checksum).ok_or("the release's checksum file is not a SHA-256")?;
     let got = download(&downloads, &release.exe_url, &new);
     let outcome = match got {
@@ -305,6 +319,16 @@ mod tests {
         assert_eq!(other.len(), 32, "the built-in key is a raw Ed25519 key");
         assert!(verify_signature(&other, TEST_MSG, &sig).is_err(), "another key");
         assert!(verify_signature(&[], TEST_MSG, &sig).is_err(), "no key fails closed");
+    }
+
+    #[test]
+    fn the_signed_file_states_the_build_number() {
+        let file = format!("{SUM}  {EXE_ASSET}\nbuild: bem-13\n");
+        assert_eq!(signed_build(&file), Some(13));
+        assert_eq!(parse_checksum(&file).as_deref(), Some(SUM), "the hash is still the first token");
+        assert_eq!(signed_build(&format!("{SUM}  {EXE_ASSET}\n")), None, "an old-format file has no number");
+        assert_eq!(signed_build("build: v0.9.0\n"), None);
+        assert_eq!(signed_build("build: bem-x\n"), None);
     }
 
     #[test]
